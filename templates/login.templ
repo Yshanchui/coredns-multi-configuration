@@ -1,0 +1,76 @@
+package templates
+
+templ LoginPage() {
+	@Layout("登录") {
+		<div style="display: flex; align-items: center; justify-content: center; min-height: 100vh;">
+			<div class="card" style="width: 100%; max-width: 420px;">
+				<div style="text-align: center; margin-bottom: 2rem;">
+					<div class="logo" style="font-size: 2rem; margin-bottom: 0.5rem;">🌐 CoreDNS Manager</div>
+					<p style="color: var(--text-secondary);">多集群 CoreDNS 配置管理</p>
+				</div>
+				
+				<div id="login-error"></div>
+				
+				<form id="login-form" onsubmit="handleLogin(event)">
+					<div class="form-group">
+						<label class="form-label" for="username">用户名</label>
+						<input type="text" id="username" name="username" class="form-input" required placeholder="请输入用户名"/>
+					</div>
+					
+					<div class="form-group">
+						<label class="form-label" for="password">密码</label>
+						<input type="password" id="password" name="password" class="form-input" required placeholder="请输入密码"/>
+					</div>
+					
+					<button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem; justify-content: center;" id="login-btn">
+						<span id="login-text">登录</span>
+						<span id="login-loading" class="loading" style="display: none;"></span>
+					</button>
+				</form>
+			</div>
+		</div>
+		
+		<script>
+			async function handleLogin(event) {
+				event.preventDefault();
+				
+				const btn = document.getElementById('login-btn');
+				const text = document.getElementById('login-text');
+				const loading = document.getElementById('login-loading');
+				const errorDiv = document.getElementById('login-error');
+				
+				btn.disabled = true;
+				text.style.display = 'none';
+				loading.style.display = 'inline-block';
+				errorDiv.innerHTML = '';
+				
+				const username = document.getElementById('username').value;
+				const password = document.getElementById('password').value;
+				
+				try {
+					const response = await fetch('/api/login', {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+						},
+						body: JSON.stringify({ username, password }),
+					});
+					
+					const data = await response.json();
+					
+					if (response.ok) {
+						window.location.href = '/';
+					} else {
+						errorDiv.innerHTML = '<div class="alert alert-error">' + (data.error || '登录失败') + '</div>';
+					}
+				} catch (error) {
+					errorDiv.innerHTML = '<div class="alert alert-error">网络错误，请重试</div>';
+				} finally {
+					btn.disabled = false;
+					text.style.display = 'inline';
+					loading.style.display = 'none';
+				}
+			}
+		</script>
+	}
+}

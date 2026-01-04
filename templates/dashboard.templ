@@ -1,0 +1,372 @@
+package templates
+
+templ DashboardPage() {
+	@Layout("集群管理") {
+		<div class="header">
+			<div class="logo">🌐 CoreDNS Manager</div>
+			<div style="display: flex; gap: 1rem; align-items: center;">
+				<button class="btn btn-primary" onclick="showAddClusterModal()">
+					➕ 添加集群
+				</button>
+				<a href="/logout" class="btn btn-secondary">退出登录</a>
+			</div>
+		</div>
+		
+		<div class="container">
+			<h2 style="margin-bottom: 1.5rem;">集群列表</h2>
+			
+			<div id="clusters-container" class="grid grid-cols-2">
+				<div style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+					<span class="loading" style="width: 2rem; height: 2rem;"></span>
+					<p style="margin-top: 1rem;">加载集群列表...</p>
+				</div>
+			</div>
+		</div>
+		
+		<!-- Add Cluster Modal -->
+		<div id="add-cluster-modal" class="modal" style="display: none;">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h3 class="modal-title">添加新集群</h3>
+					<button class="close-btn" onclick="hideAddClusterModal()">&times;</button>
+				</div>
+				
+				<div id="add-cluster-error"></div>
+				
+				<form id="add-cluster-form" onsubmit="handleAddCluster(event)">
+					<div class="form-group">
+						<label class="form-label" for="cluster-name">集群名称</label>
+						<input type="text" id="cluster-name" class="form-input" required placeholder="例如: production-cluster"/>
+					</div>
+					
+					<div class="form-group">
+						<label class="form-label" for="cluster-kubeconfig">Kubeconfig</label>
+						<textarea id="cluster-kubeconfig" class="form-textarea" required placeholder="粘贴 kubeconfig 内容..."></textarea>
+					</div>
+					
+					<div style="display: flex; gap: 1rem; justify-content: flex-end;">
+						<button type="button" class="btn btn-secondary" onclick="hideAddClusterModal()">取消</button>
+						<button type="submit" class="btn btn-primary" id="add-cluster-btn">
+							<span id="add-cluster-text">添加集群</span>
+							<span id="add-cluster-loading" class="loading" style="display: none;"></span>
+						</button>
+					</div>
+				</form>
+			</div>
+		</div>
+		
+		<!-- CoreDNS Config Modal -->
+		<div id="coredns-modal" class="modal" style="display: none;">
+			<div class="modal-content" style="max-width: 900px;">
+				<div class="modal-header">
+					<h3 class="modal-title" id="coredns-modal-title">CoreDNS 配置</h3>
+					<button class="close-btn" onclick="hideCoreDNSModal()">&times;</button>
+				</div>
+				
+				<div id="coredns-content">
+					<div style="text-align: center; padding: 2rem;">
+						<span class="loading" style="width: 2rem; height: 2rem;"></span>
+					</div>
+				</div>
+			</div>
+		</div>
+		
+		@DashboardScript()
+	}
+}
+
+templ DashboardScript() {
+	<script>
+		let currentClusterId = null;
+		
+		document.addEventListener('DOMContentLoaded', loadClusters);
+		
+		async function loadClusters() {
+			try {
+				const response = await fetch('/api/clusters');
+				if (!response.ok) throw new Error('Failed to load clusters');
+				const clusters = await response.json();
+				renderClusters(clusters);
+			} catch (error) {
+				document.getElementById('clusters-container').innerHTML = 
+					'<div class="alert alert-error">加载集群列表失败: ' + error.message + '</div>';
+			}
+		}
+		
+		function renderClusters(clusters) {
+			const container = document.getElementById('clusters-container');
+			
+			if (clusters.length === 0) {
+				container.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--text-secondary); grid-column: 1/-1;">' +
+					'<p style="font-size: 3rem; margin-bottom: 1rem;">📭</p>' +
+					'<p>暂无集群，点击上方按钮添加</p></div>';
+				return;
+			}
+			
+			let html = '';
+			for (let i = 0; i < clusters.length; i++) {
+				const cluster = clusters[i];
+				const statusClass = cluster.connected ? 'badge-success' : 'badge-danger';
+				const statusText = cluster.connected ? '✓ 已连接' : '✗ 未连接';
+				const errorHtml = cluster.error ? '<p style="color: var(--danger);">错误: ' + cluster.error + '</p>' : '';
+				
+				html += '<div class="card cluster-card" onclick="showCoreDNSConfig(\'' + cluster.id + '\', \'' + cluster.name + '\')">' +
+					'<div class="cluster-header">' +
+					'<span class="cluster-name">' + cluster.name + '</span>' +
+					'<span class="badge ' + statusClass + '">' + statusText + '</span>' +
+					'</div>' +
+					'<div class="cluster-info">' +
+					'<p>ID: ' + cluster.id.substring(0, 8) + '...</p>' +
+					'<p>添加时间: ' + new Date(cluster.created_at).toLocaleString('zh-CN') + '</p>' +
+					errorHtml +
+					'</div>' +
+					'<div style="margin-top: 1rem; display: flex; gap: 0.5rem;">' +
+					'<button class="btn btn-secondary" onclick="event.stopPropagation(); showCoreDNSConfig(\'' + cluster.id + '\', \'' + cluster.name + '\')">查看 CoreDNS</button>' +
+					'<button class="btn btn-danger" onclick="event.stopPropagation(); deleteCluster(\'' + cluster.id + '\', \'' + cluster.name + '\')">删除</button>' +
+					'</div></div>';
+			}
+			container.innerHTML = html;
+		}
+		
+		function showAddClusterModal() {
+			document.getElementById('add-cluster-modal').style.display = 'flex';
+			document.getElementById('add-cluster-form').reset();
+			document.getElementById('add-cluster-error').innerHTML = '';
+		}
+		
+		function hideAddClusterModal() {
+			document.getElementById('add-cluster-modal').style.display = 'none';
+		}
+		
+		async function handleAddCluster(event) {
+			event.preventDefault();
+			
+			const btn = document.getElementById('add-cluster-btn');
+			const text = document.getElementById('add-cluster-text');
+			const loading = document.getElementById('add-cluster-loading');
+			const errorDiv = document.getElementById('add-cluster-error');
+			
+			btn.disabled = true;
+			text.style.display = 'none';
+			loading.style.display = 'inline-block';
+			
+			const name = document.getElementById('cluster-name').value;
+			const kubeconfig = document.getElementById('cluster-kubeconfig').value;
+			
+			try {
+				const response = await fetch('/api/clusters', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ name, kubeconfig }),
+				});
+				
+				const data = await response.json();
+				
+				if (response.ok) {
+					hideAddClusterModal();
+					loadClusters();
+				} else {
+					errorDiv.innerHTML = '<div class="alert alert-error">' + (data.error || '添加失败') + '</div>';
+				}
+			} catch (error) {
+				errorDiv.innerHTML = '<div class="alert alert-error">网络错误</div>';
+			} finally {
+				btn.disabled = false;
+				text.style.display = 'inline';
+				loading.style.display = 'none';
+			}
+		}
+		
+		async function deleteCluster(id, name) {
+			if (!confirm('确定要删除集群 "' + name + '" 吗？')) return;
+			
+			try {
+				const response = await fetch('/api/clusters/' + id, { method: 'DELETE' });
+				if (response.ok) {
+					loadClusters();
+				} else {
+					const data = await response.json();
+					alert('删除失败: ' + (data.error || '未知错误'));
+				}
+			} catch (error) {
+				alert('网络错误');
+			}
+		}
+		
+		async function showCoreDNSConfig(clusterId, clusterName) {
+			currentClusterId = clusterId;
+			document.getElementById('coredns-modal').style.display = 'flex';
+			document.getElementById('coredns-modal-title').textContent = clusterName + ' - CoreDNS 配置';
+			document.getElementById('coredns-content').innerHTML = 
+				'<div style="text-align: center; padding: 2rem;">' +
+				'<span class="loading" style="width: 2rem; height: 2rem;"></span>' +
+				'<p style="margin-top: 1rem; color: var(--text-secondary);">加载配置...</p></div>';
+			
+			try {
+				const response = await fetch('/api/clusters/' + clusterId + '/coredns');
+				if (!response.ok) throw new Error('Failed to load CoreDNS config');
+				const data = await response.json();
+				renderCoreDNSConfig(data);
+			} catch (error) {
+				document.getElementById('coredns-content').innerHTML = 
+					'<div class="alert alert-error">加载失败: ' + error.message + '</div>';
+			}
+		}
+		
+		function hideCoreDNSModal() {
+			document.getElementById('coredns-modal').style.display = 'none';
+			currentClusterId = null;
+		}
+		
+		function renderCoreDNSConfig(data) {
+			const serviceName = (data.service && data.service.metadata && data.service.metadata.name) || 'kube-dns';
+			const configMapName = (data.configmap && data.configmap.metadata && data.configmap.metadata.name) || 'coredns';
+			const serviceIP = data.service_ip || 'N/A';
+			const corefile = data.corefile || '';
+			const rules = data.forward_rules || [];
+			
+			let rulesHtml = '';
+			if (rules.length === 0) {
+				rulesHtml = '<p style="color: var(--text-secondary); text-align: center; padding: 2rem;">暂无转发规则</p>';
+			} else {
+				for (let i = 0; i < rules.length; i++) {
+					const rule = rules[i];
+					rulesHtml += '<div class="rule-item">' +
+						'<div><span class="rule-domain">' + rule.namespace + '.svc.cluster.local:53</span>' +
+						'<span style="margin: 0 0.5rem;">→</span>' +
+						'<span class="rule-target">' + rule.target_ip + '</span></div>' +
+						'<button class="btn btn-danger" style="padding: 0.5rem 1rem;" onclick="deleteForwardRule(\'' + rule.namespace + '\')">删除</button></div>';
+				}
+			}
+			
+			document.getElementById('coredns-content').innerHTML = 
+				'<div class="service-info">' +
+				'<div class="info-card"><div class="info-label">Service Name</div><div class="info-value">' + serviceName + '</div></div>' +
+				'<div class="info-card"><div class="info-label">Cluster IP</div><div class="info-value">' + serviceIP + '</div></div>' +
+				'<div class="info-card"><div class="info-label">ConfigMap</div><div class="info-value">' + configMapName + '</div></div>' +
+				'</div>' +
+				'<div class="tabs">' +
+				'<button class="tab active" onclick="switchTab(\'rules\', this)">转发规则</button>' +
+				'<button class="tab" onclick="switchTab(\'corefile\', this)">Corefile</button>' +
+				'</div>' +
+				'<div id="tab-rules">' +
+				'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">' +
+				'<h4>已配置的转发规则</h4>' +
+				'<button class="btn btn-primary" onclick="showAddRuleForm()">➕ 添加规则</button></div>' +
+				'<div id="add-rule-form" style="display: none; margin-bottom: 1rem;">' +
+				'<div class="card" style="padding: 1rem;">' +
+				'<div style="display: flex; gap: 1rem; align-items: flex-end;">' +
+				'<div class="form-group" style="flex: 1; margin-bottom: 0;"><label class="form-label">Namespace</label>' +
+				'<input type="text" id="rule-namespace" class="form-input" placeholder="例如: prod"/></div>' +
+				'<div class="form-group" style="flex: 1; margin-bottom: 0;"><label class="form-label">目标 DNS IP</label>' +
+				'<input type="text" id="rule-target-ip" class="form-input" placeholder="例如: 10.96.0.10"/></div>' +
+				'<button class="btn btn-primary" onclick="addForwardRule()">添加</button>' +
+				'<button class="btn btn-secondary" onclick="hideAddRuleForm()">取消</button></div>' +
+				'<p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.5rem;">将生成: <code>namespace.svc.cluster.local:53 { forward . target_ip }</code></p>' +
+				'</div></div>' +
+				'<div class="rules-list" id="rules-list">' + rulesHtml + '</div></div>' +
+				'<div id="tab-corefile" style="display: none;">' +
+				'<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">' +
+				'<h4>Corefile 内容</h4>' +
+				'<button class="btn btn-primary" onclick="saveCorefile()" id="save-corefile-btn">保存修改</button></div>' +
+				'<textarea id="corefile-editor" class="form-textarea" style="min-height: 400px; font-size: 0.9rem;">' + escapeHtml(corefile) + '</textarea></div>';
+		}
+		
+		function escapeHtml(text) {
+			const div = document.createElement('div');
+			div.textContent = text;
+			return div.innerHTML;
+		}
+		
+		function switchTab(tabName, element) {
+			document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+			element.classList.add('active');
+			document.getElementById('tab-rules').style.display = tabName === 'rules' ? 'block' : 'none';
+			document.getElementById('tab-corefile').style.display = tabName === 'corefile' ? 'block' : 'none';
+		}
+		
+		function showAddRuleForm() {
+			document.getElementById('add-rule-form').style.display = 'block';
+		}
+		
+		function hideAddRuleForm() {
+			document.getElementById('add-rule-form').style.display = 'none';
+		}
+		
+		async function addForwardRule() {
+			const namespace = document.getElementById('rule-namespace').value.trim();
+			const targetIP = document.getElementById('rule-target-ip').value.trim();
+			
+			if (!namespace || !targetIP) {
+				alert('请填写完整信息');
+				return;
+			}
+			
+			try {
+				const response = await fetch('/api/clusters/' + currentClusterId + '/rules', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ namespace: namespace, target_ip: targetIP }),
+				});
+				
+				if (response.ok) {
+					const title = document.getElementById('coredns-modal-title').textContent;
+					showCoreDNSConfig(currentClusterId, title.split(' - ')[0]);
+				} else {
+					const data = await response.json();
+					alert('添加失败: ' + (data.error || '未知错误'));
+				}
+			} catch (error) {
+				alert('网络错误');
+			}
+		}
+		
+		async function deleteForwardRule(namespace) {
+			if (!confirm('确定要删除 ' + namespace + ' 的转发规则吗？')) return;
+			
+			try {
+				const response = await fetch('/api/clusters/' + currentClusterId + '/rules/' + namespace, {
+					method: 'DELETE',
+				});
+				
+				if (response.ok) {
+					const title = document.getElementById('coredns-modal-title').textContent;
+					showCoreDNSConfig(currentClusterId, title.split(' - ')[0]);
+				} else {
+					const data = await response.json();
+					alert('删除失败: ' + (data.error || '未知错误'));
+				}
+			} catch (error) {
+				alert('网络错误');
+			}
+		}
+		
+		async function saveCorefile() {
+			const corefile = document.getElementById('corefile-editor').value;
+			const btn = document.getElementById('save-corefile-btn');
+			
+			btn.disabled = true;
+			btn.textContent = '保存中...';
+			
+			try {
+				const response = await fetch('/api/clusters/' + currentClusterId + '/coredns', {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ corefile: corefile }),
+				});
+				
+				if (response.ok) {
+					alert('保存成功！CoreDNS 配置已更新。');
+				} else {
+					const data = await response.json();
+					alert('保存失败: ' + (data.error || '未知错误'));
+				}
+			} catch (error) {
+				alert('网络错误');
+			} finally {
+				btn.disabled = false;
+				btn.textContent = '保存修改';
+			}
+		}
+	</script>
+}
