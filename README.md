@@ -16,19 +16,16 @@
 ## 🚀 快速开始
 
 ### 使用 Docker
-
 ```bash
-# 构建镜像
-docker build -t coredns-manager:latest .
-
-# 运行
+# 直接运行
 docker run -d -p 80:80 \
   -v $(pwd)/data:/app/data \
   -e AUTH_USERNAME=admin \
   -e AUTH_PASSWORD=admin123 \
   -e AUTH_JWT_SECRET=coredns-manager-secret-key-change-me \
-  coredns-manager:latest
+  yamabuki/coredns-manager:latest
 ```
+
 
 ### 本地运行
 
@@ -43,7 +40,7 @@ templ generate
 go run main.go
 ```
 
-访问 `http://localhost:8080` - 默认账号: `admin` / `admin123`
+访问 `http://localhost:80` - 默认账号: `admin` / `admin`
 
 ## 📖 使用说明
 
