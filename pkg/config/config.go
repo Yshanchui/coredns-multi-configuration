@@ -60,7 +60,23 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Override with environment variables
+	applyEnvOverrides(cfg)
+
 	return cfg, nil
+}
+
+// applyEnvOverrides overrides configuration with environment variables
+func applyEnvOverrides(cfg *Config) {
+	if username := os.Getenv("AUTH_USERNAME"); username != "" {
+		cfg.Auth.Username = username
+	}
+	if password := os.Getenv("AUTH_PASSWORD"); password != "" {
+		cfg.Auth.Password = password
+	}
+	if jwtSecret := os.Getenv("AUTH_JWT_SECRET"); jwtSecret != "" {
+		cfg.Auth.JWTSecret = jwtSecret
+	}
 }
 
 // Save saves configuration to a YAML file
