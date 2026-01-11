@@ -102,10 +102,10 @@ func (h *CoreDNSHandler) AddForwardRule(ctx context.Context, cluster *models.Clu
 		return err
 	}
 
-	// Check if rule already exists
+	// Check if rule already exists (compare full name: service.namespace or just namespace)
 	for _, r := range info.ForwardRules {
-		if r.Namespace == rule.Namespace {
-			return fmt.Errorf("forward rule for namespace %s already exists", rule.Namespace)
+		if r.GetFullName() == rule.GetFullName() {
+			return fmt.Errorf("forward rule for %s already exists", rule.GetFullName())
 		}
 	}
 
@@ -116,14 +116,31 @@ func (h *CoreDNSHandler) AddForwardRule(ctx context.Context, cluster *models.Clu
 }
 
 // DeleteForwardRule removes a forward rule from the CoreDNS configuration
-func (h *CoreDNSHandler) DeleteForwardRule(ctx context.Context, cluster *models.Cluster, namespace string) error {
+// The name parameter can be "namespace" or "service.namespace"
+// isFullFQDN indicates whether the rule uses FQDN format (*.svc.cluster.local:53)
+func (h *CoreDNSHandler) DeleteForwardRule(ctx context.Context, cluster *models.Cluster, name string, isFullFQDN bool) error {
 	info, err := h.GetCoreDNSInfo(ctx, cluster)
 	if err != nil {
 		return err
 	}
 
-	// Find and remove the rule
-	ruleBlock := fmt.Sprintf("%s.svc.cluster.local:53", namespace)
+	// Parse input and build the rule block pattern
+	serviceName, namespace, _ := models.ParseNameInput(name)
+	var fullName string
+	if serviceName != "" {
+		fullName = serviceName + "." + namespace
+	} else {
+		fullName = namespace
+	}
+
+	// Build domain block pattern based on format type
+	var ruleBlock string
+	if isFullFQDN {
+		ruleBlock = fmt.Sprintf("%s.svc.cluster.local:53", fullName)
+	} else {
+		ruleBlock = fmt.Sprintf("%s:53", fullName)
+	}
+
 	lines := strings.Split(info.Corefile, "\n")
 	var newLines []string
 	skipBlock := false
@@ -155,37 +172,78 @@ func (h *CoreDNSHandler) DeleteForwardRule(ctx context.Context, cluster *models.
 }
 
 // parseForwardRules extracts forward rules from a Corefile
+// Supports 4 domain formats:
+// 1. namespace:53 (short format, namespace only)
+// 2. service.namespace:53 (short format, service.namespace)
+// 3. namespace.svc.cluster.local:53 (FQDN format)
+// 4. service.namespace.svc.cluster.local:53 (FQDN format)
 func parseForwardRules(corefile string) []models.ForwardRule {
 	var rules []models.ForwardRule
 	lines := strings.Split(corefile, "\n")
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		// Look for patterns like "namespace.svc.cluster.local:53 {"
-		if strings.HasSuffix(trimmed, ".svc.cluster.local:53 {") || strings.HasSuffix(trimmed, ".svc.cluster.local:53{") {
-			// Extract namespace
-			parts := strings.Split(trimmed, ".")
-			if len(parts) > 0 {
-				namespace := parts[0]
+		// Look for patterns ending with :53 { or :53{
+		if !strings.Contains(trimmed, ":53") {
+			continue
+		}
+		if !strings.HasSuffix(trimmed, "{") && !strings.HasSuffix(trimmed, "{ ") {
+			continue
+		}
 
-				// Look for forward line in the next few lines
-				for j := i + 1; j < len(lines) && j < i+5; j++ {
-					forwardLine := strings.TrimSpace(lines[j])
-					if strings.HasPrefix(forwardLine, "forward .") || strings.HasPrefix(forwardLine, "forward .") {
-						// Extract target IP
-						forwardParts := strings.Fields(forwardLine)
-						if len(forwardParts) >= 3 {
-							rules = append(rules, models.ForwardRule{
-								Namespace: namespace,
-								TargetIP:  forwardParts[2],
-							})
-						}
-						break
-					}
-					if strings.Contains(forwardLine, "}") {
-						break
-					}
+		// Extract the domain part before :53
+		domainPart := strings.TrimSuffix(trimmed, "{")
+		domainPart = strings.TrimSuffix(domainPart, " ")
+		domainPart = strings.TrimSuffix(domainPart, ":53")
+		domainPart = strings.TrimSpace(domainPart)
+
+		// Skip main zones
+		if domainPart == "" || domainPart == "." || domainPart == "cluster.local" {
+			continue
+		}
+
+		var serviceName, namespace string
+		var isFullFQDN bool
+
+		if strings.HasSuffix(domainPart, ".svc.cluster.local") {
+			// FQDN format
+			isFullFQDN = true
+			name := strings.TrimSuffix(domainPart, ".svc.cluster.local")
+			serviceName, namespace, _ = models.ParseNameInput(name)
+		} else {
+			// Short format (namespace or service.namespace)
+			parts := strings.SplitN(domainPart, ".", 2)
+			if len(parts) == 2 {
+				serviceName = parts[0]
+				namespace = parts[1]
+			} else {
+				namespace = parts[0]
+			}
+		}
+
+		// Skip if namespace is empty
+		if namespace == "" {
+			continue
+		}
+
+		// Look for forward line in the next few lines
+		for j := i + 1; j < len(lines) && j < i+10; j++ {
+			forwardLine := strings.TrimSpace(lines[j])
+			if strings.HasPrefix(forwardLine, "forward .") {
+				// Extract target IP
+				forwardParts := strings.Fields(forwardLine)
+				if len(forwardParts) >= 3 {
+					rules = append(rules, models.ForwardRule{
+						Namespace:   namespace,
+						ServiceName: serviceName,
+						TargetIP:    forwardParts[2],
+						IsFullFQDN:  isFullFQDN,
+					})
 				}
+				break
+			}
+			if strings.Contains(forwardLine, "}") {
+				break
 			}
 		}
 	}

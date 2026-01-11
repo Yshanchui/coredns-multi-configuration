@@ -6,7 +6,7 @@ server:
 
 auth:
   username: "admin"
-  password: "admin"
+  password: "admin123"
   jwt_secret: "coredns-manager-secret-key-change-me"
 
 data_dir: "./data"

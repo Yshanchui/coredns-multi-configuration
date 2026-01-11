@@ -246,9 +246,14 @@ func (h *Handlers) AddForwardRule(c *gin.Context) {
 		return
 	}
 
+	// Parse namespace input (can be "namespace", "service.namespace", or "*.svc.cluster.local")
+	serviceName, namespace, isFullFQDN := models.ParseNameInput(req.Namespace)
+
 	rule := models.ForwardRule{
-		Namespace: req.Namespace,
-		TargetIP:  req.TargetIP,
+		Namespace:   namespace,
+		ServiceName: serviceName,
+		TargetIP:    req.TargetIP,
+		IsFullFQDN:  isFullFQDN,
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -265,7 +270,8 @@ func (h *Handlers) AddForwardRule(c *gin.Context) {
 // DeleteForwardRule removes a forward rule from CoreDNS
 func (h *Handlers) DeleteForwardRule(c *gin.Context) {
 	id := c.Param("id")
-	namespace := c.Param("namespace")
+	name := c.Param("namespace")
+	isFullFQDN := c.Query("fqdn") == "true"
 
 	cluster, found := h.store.GetCluster(id)
 	if !found {
@@ -276,7 +282,7 @@ func (h *Handlers) DeleteForwardRule(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	if err := h.coreDNSHandler.DeleteForwardRule(ctx, cluster, namespace); err != nil {
+	if err := h.coreDNSHandler.DeleteForwardRule(ctx, cluster, name, isFullFQDN); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

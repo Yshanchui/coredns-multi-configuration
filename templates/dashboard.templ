@@ -231,11 +231,15 @@ templ DashboardScript() {
 			} else {
 				for (let i = 0; i < rules.length; i++) {
 					const rule = rules[i];
+					// Build full name: service.namespace or just namespace
+					const fullName = rule.service_name ? rule.service_name + '.' + rule.namespace : rule.namespace;
+					// Display domain: FQDN format shows .svc.cluster.local, short format shows just fullName
+					const displayDomain = rule.is_full_fqdn ? fullName + '.svc.cluster.local:53' : fullName + ':53';
 					rulesHtml += '<div class="rule-item">' +
-						'<div><span class="rule-domain">' + rule.namespace + '.svc.cluster.local:53</span>' +
+						'<div><span class="rule-domain">' + displayDomain + '</span>' +
 						'<span style="margin: 0 0.5rem;">→</span>' +
 						'<span class="rule-target">' + rule.target_ip + '</span></div>' +
-						'<button class="btn btn-danger" style="padding: 0.5rem 1rem;" onclick="deleteForwardRule(\'' + rule.namespace + '\')">删除</button></div>';
+						'<button class="btn btn-danger" style="padding: 0.5rem 1rem;" onclick="deleteForwardRule(\'' + fullName + '\', ' + (rule.is_full_fqdn ? 'true' : 'false') + ')">删除</button></div>';
 				}
 			}
 			
@@ -254,15 +258,15 @@ templ DashboardScript() {
 				'<h4>已配置的转发规则</h4>' +
 				'<button class="btn btn-primary" onclick="showAddRuleForm()">➕ 添加规则</button></div>' +
 				'<div id="add-rule-form" style="display: none; margin-bottom: 1rem;">' +
-				'<div class="card" style="padding: 1rem;">' +
+			'	<div class="card" style="padding: 1rem;">' +
 				'<div style="display: flex; gap: 1rem; align-items: flex-end;">' +
-				'<div class="form-group" style="flex: 1; margin-bottom: 0;"><label class="form-label">Namespace</label>' +
-				'<input type="text" id="rule-namespace" class="form-input" placeholder="例如: prod"/></div>' +
+				'<div class="form-group" style="flex: 1; margin-bottom: 0;"><label class="form-label">名称</label>' +
+				'<input type="text" id="rule-namespace" class="form-input" placeholder="prod / mysql.tidb-cluster / prod.svc.cluster.local"/></div>' +
 				'<div class="form-group" style="flex: 1; margin-bottom: 0;"><label class="form-label">目标 DNS IP</label>' +
 				'<input type="text" id="rule-target-ip" class="form-input" placeholder="例如: 10.96.0.10"/></div>' +
 				'<button class="btn btn-primary" onclick="addForwardRule()">添加</button>' +
 				'<button class="btn btn-secondary" onclick="hideAddRuleForm()">取消</button></div>' +
-				'<p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.5rem;">将生成: <code>namespace.svc.cluster.local:53 { forward . target_ip }</code></p>' +
+				'<p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.5rem;">短格式(prod/mysql.tidb-cluster)自动添加rewrite，完整格式(*.svc.cluster.local)只forward</p>' +
 				'</div></div>' +
 				'<div class="rules-list" id="rules-list">' + rulesHtml + '</div></div>' +
 				'<div id="tab-corefile" style="display: none;">' +
@@ -321,11 +325,13 @@ templ DashboardScript() {
 			}
 		}
 		
-		async function deleteForwardRule(namespace) {
-			if (!confirm('确定要删除 ' + namespace + ' 的转发规则吗？')) return;
+		async function deleteForwardRule(name, isFullFQDN) {
+			const displayName = isFullFQDN ? name + '.svc.cluster.local' : name;
+			if (!confirm('确定要删除 ' + displayName + ' 的转发规则吗？')) return;
 			
 			try {
-				const response = await fetch('/api/clusters/' + currentClusterId + '/rules/' + namespace, {
+				const encodedName = encodeURIComponent(name);
+				const response = await fetch('/api/clusters/' + currentClusterId + '/rules/' + encodedName + '?fqdn=' + isFullFQDN, {
 					method: 'DELETE',
 				});
 				

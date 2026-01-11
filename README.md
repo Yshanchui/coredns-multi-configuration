@@ -23,7 +23,7 @@ docker run -d -p 80:80 \
   -e AUTH_USERNAME=admin \
   -e AUTH_PASSWORD=admin123 \
   -e AUTH_JWT_SECRET=coredns-manager-secret-key-change-me \
-  yamabuki/coredns-manager:latest
+  yshanchui/coredns-manager:latest
 ```
 
 
